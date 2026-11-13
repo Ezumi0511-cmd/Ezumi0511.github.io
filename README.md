@@ -1,2 +1,2 @@
-# Ezumi0511.github.io
-test for project
+# 這是一個測試用開源圖片分割網站
+學習用,請見諒
