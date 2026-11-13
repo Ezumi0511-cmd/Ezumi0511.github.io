@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="在手機或電腦上把圖片依原始解析度切成多張，支援等分、自訂尺寸、框選區塊與多種解析度輸出。">
+<meta name="theme-color" content="#1f5b46">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="圖片分割">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<style>
+:root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; font: 14px/1.5 system-ui, sans-serif; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body><title>圖片分割工具</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* 版面：手機單欄（上傳 → 預覽 → 設定 → 結果，底部固定操作列）；寬螢幕左設定、右預覽。預覽區是一塊綠色切割墊，邊緣有像素尺規。 */
+:root {
+  --bg: #edf0ec;
+  --surface: #ffffff;
+  --ink: #17221c;
+  --muted: #5a6960;
+  --line: #d3dbd5;
+  --mat: #1f5b46;
+  --mat-line: rgba(231, 244, 236, 0.14);
+  --mat-ink: #dcebe2;
+  --accent: #1f5b46;
+  --accent-ink: #ffffff;
+  --blade: #e0822a;
+  --soft: #e3ebe5;
+  --danger: #b3382c;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1411; --surface: #161f1a; --ink: #e3ebe6; --muted: #93a39a; --line: #2a3630;
+    --mat: #173f31; --mat-line: rgba(220, 240, 228, 0.10); --mat-ink: #cfe3d7;
+    --accent: #5cbf93; --accent-ink: #0b1510; --blade: #f09d4a; --soft: #1f2a24; --danger: #e0705f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1411; --surface: #161f1a; --ink: #e3ebe6; --muted: #93a39a; --line: #2a3630;
+  --mat: #173f31; --mat-line: rgba(220, 240, 228, 0.10); --mat-ink: #cfe3d7;
+  --accent: #5cbf93; --accent-ink: #0b1510; --blade: #f09d4a; --soft: #1f2a24; --danger: #e0705f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--font-body); font-size: 15px; line-height: 1.55; -webkit-text-size-adjust: 100%; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 0;
+}
+header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+header.top h1 { font-size: 1.35rem; margin: 0; letter-spacing: 0.02em; text-wrap: balance; }
+header.top p { margin: 0; color: var(--muted); font-size: 0.85rem; }
+
+.layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) {
+  .layout { grid-template-columns: 360px minmax(0, 1fr); align-items: start; }
+  .side { grid-column: 1; grid-row: 1 / span 3; }
+  .stage { grid-column: 2; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+  .results { grid-column: 2; }
+}
+.side { display: grid; gap: 12px; min-width: 0; }
+/* 手機：上傳 → 預覽 → 其他設定 → 結果 */
+@media (max-width: 899px) {
+  .layout { gap: 12px; }
+  .side { display: contents; }
+  .side > .card { order: 3; }
+  .side > .card:first-child { order: 1; }
+  .stage { order: 2; }
+  .results { order: 4; }
+}
+.stage, .results { min-width: 0; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.card h2 { font-size: 0.8rem; font-weight: 700; margin: 0; color: var(--muted); letter-spacing: 0.08em; }
+
+/* 上傳 */
+.pick {
+  display: flex; align-items: center; gap: 12px; padding: 12px; border: 1.5px dashed var(--line);
+  border-radius: 10px; cursor: pointer; background: var(--soft);
+}
+.pick:focus-within, .pick.drag { border-color: var(--accent); }
+.pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.pick .btn { flex: none; }
+.info { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 0.85rem; margin: 0; }
+.info dt { color: var(--muted); }
+.info dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.badge { display: inline-block; font-size: 0.72rem; padding: 1px 8px; border-radius: 99px; background: var(--blade); color: #fff; margin-left: 6px; vertical-align: 1px; }
+
+/* 控制項 */
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--soft); border-radius: 10px; padding: 3px; gap: 3px; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { text-align: center; padding: 8px 4px; border-radius: 8px; cursor: pointer; font-size: 0.88rem; font-weight: 500; color: var(--muted); }
+.seg input:checked + label { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); }
+
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.field { display: grid; gap: 4px; flex: 1 1 120px; min-width: 0; }
+.field span { font-size: 0.8rem; color: var(--muted); }
+input[type=text], input[type=number] {
+  width: 100%; font: inherit; font-family: var(--font-num); font-size: 16px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+}
+input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hint { font-size: 0.8rem; color: var(--muted); margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 99px; cursor: pointer; font-size: 0.86rem; user-select: none; background: var(--surface); }
+.chip input { position: absolute; opacity: 0; pointer-events: none; }
+.chip:has(input:checked) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip.small { padding: 4px 10px; font-family: var(--font-num); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 0.9rem; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.summary { font-size: 0.86rem; font-weight: 500; color: var(--accent); margin: 0; overflow-wrap: anywhere; }
+.summary.err { color: var(--danger); }
+
+.regions { display: grid; gap: 6px; }
+.region { display: grid; grid-template-columns: 26px repeat(4, minmax(0, 1fr)) 34px; gap: 4px; align-items: center; }
+.region b { font-family: var(--font-num); font-size: 0.8rem; color: var(--muted); text-align: center; }
+.region input { padding: 6px; font-size: 16px; }
+.region.head span { font-size: 0.72rem; color: var(--muted); text-align: center; }
+.region.bad input { border-color: var(--danger); }
+
+.btn {
+  font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 11px 16px; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn.ghost { background: var(--soft); color: var(--ink); font-weight: 500; }
+.btn.blade { background: var(--blade); color: #fff; }
+.btn.icon { padding: 6px; width: 34px; height: 34px; background: transparent; color: var(--muted); font-size: 1.1rem; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* 預覽（切割墊） */
+.stage .card { padding: 0; overflow: hidden; gap: 0; }
+.stage-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 14px; flex-wrap: wrap; }
+.stage-head h2 { margin: 0; }
+.mat { background: var(--mat); position: relative; overflow: hidden; min-width: 0; }
+#preview { display: block; width: 100%; max-width: 100%; touch-action: pan-y; }
+#preview.drawing { touch-action: none; cursor: crosshair; }
+.stage-foot { padding: 8px 14px; font-size: 0.78rem; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+
+/* 結果 */
+.results .card { gap: 12px; }
+.res-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.res-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.thumb { border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: var(--soft); cursor: pointer; display: grid; gap: 4px; text-align: center; font: inherit; color: inherit; }
+.thumb canvas { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; background: repeating-conic-gradient(var(--line) 0 25%, transparent 0 50%) 0 0 / 14px 14px; border-radius: 6px; }
+.thumb span { font-size: 0.72rem; color: var(--muted); }
+.thumb span b { color: var(--ink); font-weight: 500; }
+.empty { color: var(--muted); font-size: 0.9rem; margin: 0; }
+
+/* 底部操作列 */
+.bar {
+  position: sticky; bottom: 0; z-index: 5; margin-top: 18px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.bar-in { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.bar .status { grid-column: 1 / -1; font-size: 0.8rem; color: var(--muted); min-height: 1.2em; overflow-wrap: anywhere; }
+.progress { grid-column: 1 / -1; height: 4px; background: var(--soft); border-radius: 4px; overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--blade); transition: width .15s; }
+
+/* 單張檢視 */
+.viewer { position: fixed; inset: 0; z-index: 20; background: rgba(8, 14, 11, 0.94); display: grid; grid-template-rows: auto 1fr auto; color: #e8efe9; }
+.viewer header, .viewer footer {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-left: max(14px, env(safe-area-inset-left, 0px)); padding-right: max(14px, env(safe-area-inset-right, 0px));
+}
+.viewer header { padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: 10px; justify-content: space-between; }
+.viewer footer { padding-top: 10px; padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); justify-content: center; }
+.viewer .meta { font-size: 0.85rem; min-width: 0; }
+.viewer .scroller { overflow: auto; -webkit-overflow-scrolling: touch; display: grid; place-items: center; min-height: 0; }
+.viewer .scroller.fit canvas { max-width: 100%; max-height: 100%; width: auto; height: auto; }
+.viewer canvas { display: block; background: repeating-conic-gradient(#cfd6d1 0 25%, #fff 0 50%) 0 0 / 16px 16px; image-rendering: auto; }
+.viewer .scroller.real canvas { max-width: none; image-rendering: pixelated; }
+.viewer .btn.ghost { background: rgba(255,255,255,.12); color: #fff; }
+
+@media (prefers-reduced-motion: reduce) { .progress i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>圖片分割工具</h1>
+    <p>圖片只在你的手機上處理，不會上傳到任何地方</p>
+  </header>
+
+  <div class="layout">
+    <section class="side" aria-label="設定">
+      <div class="card">
+        <h2>1 · 上傳圖片</h2>
+        <label class="pick" id="pick">
+          <input type="file" id="file" accept="image/*">
+          <span class="btn">選擇圖片</span>
+          <span class="hint">從相簿或「檔案」選一張圖，電腦上也可以直接拖曳進來</span>
+        </label>
+        <dl class="info" id="info"></dl>
+      </div>
+
+      <div class="card">
+        <h2>2 · 分割方式</h2>
+        <div class="seg" role="radiogroup" aria-label="分割方式">
+          <input type="radio" name="mode" id="m-equal" value="equal" checked><label for="m-equal">等分</label>
+          <input type="radio" name="mode" id="m-size" value="size"><label for="m-size">依尺寸</label>
+          <input type="radio" name="mode" id="m-custom" value="custom"><label for="m-custom">自訂區塊</label>
+        </div>
+
+        <div id="p-equal" class="row" style="display:grid;gap:10px">
+          <div class="row">
+            <label class="field"><span>欄數（橫向切幾份）</span><input type="number" id="cols" min="1" max="70" value="3" inputmode="numeric"></label>
+            <label class="field"><span>列數（直向切幾份）</span><input type="number" id="rows" min="1" max="70" value="3" inputmode="numeric"></label>
+          </div>
+          <div class="chips" id="presets"></div>
+          <p class="hint">像素以整數平均分配，所有區塊加起來剛好是整張原圖。</p>
+        </div>
+
+        <div id="p-size" hidden style="display:grid;gap:10px">
+          <div class="row">
+            <label class="field"><span>每塊寬度 px</span><input type="text" id="sw" value="1080" inputmode="numeric"></label>
+            <label class="field"><span>每塊高度 px</span><input type="text" id="sh" value="1080" inputmode="numeric"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="keep" checked>保留邊緣不足尺寸的剩餘部分</label>
+          <p class="hint">可用逗號輸入多個數值，例如 300,500,800，會依序使用，用完後重複最後一個。</p>
+        </div>
+
+        <div id="p-custom" hidden style="display:grid;gap:10px">
+          <div class="regions" id="regions"></div>
+          <div class="row">
+            <button class="btn ghost" type="button" id="addRegion">＋ 新增區塊</button>
+            <button class="btn ghost" type="button" id="clearRegions">全部清空</button>
+          </div>
+          <p class="hint">也可以直接在預覽圖上用手指（或滑鼠）拖曳框出區塊。</p>
+        </div>
+
+        <p class="summary" id="summary" aria-live="polite"></p>
+      </div>
+
+      <div class="card">
+        <h2>3 · 輸出解析度（可複選）</h2>
+        <div class="chips" id="scales"></div>
+        <div class="row">
+          <label class="check" style="align-items:center"><input type="checkbox" id="customOn">自訂</label>
+          <input type="number" id="customPct" min="1" max="800" value="150" inputmode="numeric" style="width:90px">
+          <span class="hint">%</span>
+        </div>
+        <p class="hint">100% 直接複製原始像素，不縮放；其他比例用高品質縮放。</p>
+      </div>
+
+      <div class="card">
+        <h2>4 · 格式與儲存</h2>
+        <div class="seg" role="radiogroup" aria-label="檔案格式">
+          <input type="radio" name="fmt" id="f-png" value="png" checked><label for="f-png">PNG 無損</label>
+          <input type="radio" name="fmt" id="f-jpg" value="jpg"><label for="f-jpg">JPEG 品質 100</label>
+        </div>
+        <label class="check"><input type="checkbox" id="autoDl" checked>切割後自動打包下載（ZIP）</label>
+        <label class="check"><input type="checkbox" id="subDir" checked>ZIP 內依解析度分資料夾</label>
+        <p class="hint" id="saveHint">iPhone：ZIP 會存到「檔案」App，點一下就能解壓縮。想直接存進「照片」，請用結果區的「逐張儲存」。</p>
+      </div>
+    </section>
+
+    <section class="stage" aria-label="預覽">
+      <div class="card">
+        <div class="stage-head">
+          <h2>原圖與分割線</h2>
+          <span class="hint" id="stageHint">點一下區塊可以看原始解析度</span>
+        </div>
+        <div class="mat"><canvas id="preview" aria-label="原圖與分割線預覽"></canvas></div>
+        <div class="stage-foot"><span id="dims" class="num"></span><span id="cursor" class="num"></span></div>
+      </div>
+    </section>
+
+    <section class="results" aria-label="切割結果">
+      <div class="card">
+        <div class="res-head">
+          <h2 id="resTitle">切割結果</h2>
+          <div class="res-actions">
+            <button class="btn ghost" type="button" id="saveEach" disabled>逐張儲存</button>
+            <button class="btn ghost" type="button" id="dlZip2" disabled>下載 ZIP</button>
+          </div>
+        </div>
+        <div class="thumbs" id="thumbs"></div>
+        <p class="empty" id="resEmpty">按下方「切割並預覽」後，切好的每一張會出現在這裡。</p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="bar">
+  <div class="bar-in">
+    <div class="progress" aria-hidden="true"><i id="prog"></i></div>
+    <button class="btn" type="button" id="cut">切割並預覽</button>
+    <button class="btn blade" type="button" id="dlZip">下載全部 ZIP</button>
+    <div class="status" id="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-label="單張檢視">
+  <header>
+    <div class="meta" id="vMeta"></div>
+    <button class="btn ghost" type="button" id="vClose">關閉</button>
+  </header>
+  <div class="scroller fit" id="vScroll"><canvas id="vCanvas"></canvas></div>
+  <footer>
+    <button class="btn ghost" type="button" id="vPrev">上一張</button>
+    <button class="btn ghost" type="button" id="vMode">實際像素 100%</button>
+    <button class="btn ghost" type="button" id="vNext">下一張</button>
+    <button class="btn blade" type="button" id="vSave">存這張</button>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const MAX_TILES = 3000;
+  const MAX_CANVAS = 16000000; // iPhone Safari 單一畫布像素上限約 1677 萬
+  const SCALES = [
+    { f: 2, label: "200%", folder: "200%" },
+    { f: 1, label: "100% 原始", folder: "100%_原始" },
+    { f: 0.75, label: "75%", folder: "75%" },
+    { f: 0.5, label: "50%", folder: "50%" },
+    { f: 0.25, label: "25%", folder: "25%" },
+  ];
+
+  const st = {
+    img: null, W: 0, H: 0, name: "image", fileName: "", size: 0, type: "", sample: false,
+    tiles: [], regions: [], busy: false, cutDone: false, viewIdx: 0, fit: true,
+  };
+
+  // ---------- 儲存（Claude 下載功能；在一般瀏覽器則直接下載） ----------
+  let saver = null;
+  const saverReady = (async () => {
+    try { if (window.claude && typeof window.claude.use === "function") saver = await window.claude.use("downloads"); }
+    catch (e) { saver = null; }
+  })();
+  async function saveFile(filename, blob) {
+    if (window.claude && typeof window.claude.use === "function") await saverReady;
+    if (saver) {
+      try { await saver.save({ filename, data: blob }); return "saved"; }
+      catch (e) {
+        const c = e && e.code;
+        if (c === "declined") return "declined";
+        if (c === "rate_limited") return "rate";
+        if (c === "too_large") return "too_large";
+        throw new Error((e && e.message) || "無法儲存檔案");
+      }
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    return "saved";
+  }
+
+  // ---------- 小工具 ----------
+  const fmtBytes = (n) => n >= 1048576 ? (n / 1048576).toFixed(2) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
+  const safeName = (s) => (s || "image").replace(/[\\/:*?"<>|]/g, "_").trim() || "image";
+  const pad = (n, w) => String(n).padStart(w, "0");
+  const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth() + 1, 2)}${pad(d.getDate(), 2)}_${pad(d.getHours(), 2)}${pad(d.getMinutes(), 2)}${pad(d.getSeconds(), 2)}`; };
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  function setStatus(t, pct) { $("status").textContent = t || ""; $("prog").style.width = (pct == null ? 0 : pct) + "%"; }
+
+  // ---------- 載入圖片 ----------
+  async function loadBlob(blob, fileName, isSample) {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+    try { await img.decode(); }
+    catch (e) { URL.revokeObjectURL(url); setStatus("這個檔案無法讀取，請換一張 PNG、JPG 或 HEIC 圖片。"); return; }
+    if (st.img && st.img._url) URL.revokeObjectURL(st.img._url);
+    img._url = url;
+    st.img = img; st.W = img.naturalWidth; st.H = img.naturalHeight;
+    st.fileName = fileName; st.name = safeName(fileName.replace(/\.[^.]+$/, ""));
+    st.size = blob.size; st.type = (blob.type || "").replace("image/", "").toUpperCase() || "未知";
+    st.sample = !!isSample; st.cutDone = false;
+    st.regions = [];
+    renderRegions();
+    renderInfo();
+    clearResults();
+    recompute();
+    setStatus(isSample ? "目前是範例圖片，換成你自己的圖就能開始。" : "圖片已載入，設定好分割方式後按「切割並預覽」。");
+  }
+
+  function renderInfo() {
+    const rows = [
+      ["檔名", st.fileName + (st.sample ? '<span class="badge">範例</span>' : "")],
+      ["原始尺寸", `<span class="num">${st.W} × ${st.H}</span> px`],
+      ["格式 / 大小", `${st.type}　<span class="num">${fmtBytes(st.size)}</span>`],
+    ];
+    $("info").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+    $("dims").textContent = `原圖 ${st.W} × ${st.H} px`;
+  }
+
+  $("file").addEventListener("change", (e) => { const f = e.target.files[0]; if (f) loadBlob(f, f.name, false); e.target.value = ""; });
+  const pick = $("pick");
+  ["dragenter", "dragover"].forEach((t) => pick.addEventListener(t, (e) => { e.preventDefault(); pick.classList.add("drag"); }));
+  ["dragleave", "drop"].forEach((t) => pick.addEventListener(t, () => pick.classList.remove("drag")));
+  document.addEventListener("dragover", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    if (f && f.type.startsWith("image/") && !st.busy) loadBlob(f, f.name, false);
+  });
+
+  // 範例圖片（讓第一次打開就看得到效果）
+  function makeSample() {
+    const c = document.createElement("canvas"); c.width = 1600; c.height = 1200;
+    const g = c.getContext("2d");
+    const sky = g.createLinearGradient(0, 0, 0, 1200);
+    sky.addColorStop(0, "#9fd3e6"); sky.addColorStop(0.6, "#f6e1c3"); sky.addColorStop(1, "#f2c79a");
+    g.fillStyle = sky; g.fillRect(0, 0, 1600, 1200);
+    g.fillStyle = "#f7b04c"; g.beginPath(); g.arc(1180, 360, 120, 0, Math.PI * 2); g.fill();
+    const hill = (y, col, amp, ph) => {
+      g.fillStyle = col; g.beginPath(); g.moveTo(0, 1200);
+      for (let x = 0; x <= 1600; x += 20) g.lineTo(x, y + Math.sin(x / 260 + ph) * amp + Math.sin(x / 90 + ph * 2) * amp * 0.2);
+      g.lineTo(1600, 1200); g.closePath(); g.fill();
+    };
+    hill(760, "#6f9f7f", 60, 0.4); hill(880, "#3f7a5c", 45, 1.9); hill(1010, "#1f5b46", 35, 3.1);
+    g.fillStyle = "rgba(20,34,28,.85)"; g.font = "bold 64px sans-serif"; g.fillText("範例圖片", 80, 150);
+    g.font = "40px monospace"; g.fillText("1600 × 1200 px", 80, 210);
+    return new Promise((r) => c.toBlob(r, "image/png"));
+  }
+
+  // ---------- 分割計算 ----------
+  function equalSplit(W, H, cols, rows) {
+    const out = []; let idx = 1;
+    for (let r = 0; r < rows; r++) {
+      const y0 = Math.floor(r * H / rows), y1 = Math.floor((r + 1) * H / rows);
+      for (let c = 0; c < cols; c++) {
+        const x0 = Math.floor(c * W / cols), x1 = Math.floor((c + 1) * W / cols);
+        if (x1 > x0 && y1 > y0) out.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, name: `r${pad(r + 1, 2)}_c${pad(c + 1, 2)}`, index: idx++ });
+      }
+    }
+    return out;
+  }
+  function parseSizes(text, what) {
+    const parts = String(text || "").split(/[,，、;；\s]+/).filter(Boolean);
+    if (!parts.length) throw new Error("請輸入" + what);
+    return parts.map((p) => { const v = Number(p); if (!Number.isInteger(v) || v <= 0) throw new Error(`${what}「${p}」不是有效的正整數`); return v; });
+  }
+  function segments(total, sizes, keep) {
+    const seg = []; let pos = 0, i = 0;
+    while (pos < total) {
+      const sz = sizes[Math.min(i, sizes.length - 1)], len = Math.min(sz, total - pos);
+      if (len < sz && !keep && seg.length) break;
+      seg.push([pos, len]); pos += len; i++;
+      if (seg.length > MAX_TILES) throw new Error("分割數量過多，請加大每塊尺寸");
+    }
+    return seg;
+  }
+  function sizeSplit(W, H, ws, hs, keep) {
+    const xs = segments(W, ws, keep), ys = segments(H, hs, keep);
+    if (xs.length * ys.length > MAX_TILES) throw new Error(`分割數量過多（${xs.length * ys.length} 張，上限 ${MAX_TILES}），請加大每塊尺寸`);
+    const out = []; let idx = 1;
+    ys.forEach((y, r) => xs.forEach((x, c) => out.push({ x: x[0], y: y[0], w: x[1], h: y[1], name: `r${pad(r + 1, 2)}_c${pad(c + 1, 2)}`, index: idx++ })));
+    return out;
+  }
+  function customTiles(W, H) {
+    if (!st.regions.length) throw new Error("尚未新增區塊：按「新增區塊」或在預覽圖上拖曳框選");
+    const out = [];
+    st.regions.forEach((r, i) => {
+      const x0 = Math.max(0, r.x), y0 = Math.max(0, r.y), x1 = Math.min(W, r.x + r.w), y1 = Math.min(H, r.y + r.h);
+      r.bad = !(x1 > x0 && y1 > y0) || !(r.w > 0 && r.h > 0);
+      if (!r.bad) out.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, name: pad(i + 1, 3), index: out.length + 1, region: i });
+    });
+    return out;
+  }
+  const mode = () => document.querySelector('input[name="mode"]:checked').value;
+
+  function recompute() {
+    const sum = $("summary");
+    sum.classList.remove("err");
+    if (!st.img) { st.tiles = []; sum.textContent = "請先載入圖片"; drawPreview(); return; }
+    try {
+      const m = mode();
+      if (m === "equal") {
+        const c = Math.max(1, Math.min(70, parseInt($("cols").value, 10) || 1));
+        const r = Math.max(1, Math.min(70, parseInt($("rows").value, 10) || 1));
+        st.tiles = equalSplit(st.W, st.H, c, r);
+      } else if (m === "size") {
+        st.tiles = sizeSplit(st.W, st.H, parseSizes($("sw").value, "寬度"), parseSizes($("sh").value, "高度"), $("keep").checked);
+      } else {
+        st.tiles = customTiles(st.W, st.H);
+        document.querySelectorAll(".region[data-i]").forEach((el) => el.classList.toggle("bad", !!(st.regions[+el.dataset.i] || {}).bad));
+      }
+      const groups = new Map();
+      st.tiles.forEach((t) => { const k = `${t.w}×${t.h}`; groups.set(k, (groups.get(k) || 0) + 1); });
+      const list = [...groups.entries()].sort((a, b) => b[1] - a[1]);
+      sum.textContent = st.tiles.length
+        ? `共 ${st.tiles.length} 張：` + list.slice(0, 4).map(([k, n]) => `${k}px × ${n}`).join("、") + (list.length > 4 ? ` 等 ${list.length} 種尺寸` : "")
+        : "目前沒有有效的區塊";
+    } catch (e) {
+      st.tiles = []; sum.textContent = e.message; sum.classList.add("err");
+    }
+    drawPreview();
+    updateButtons();
+    resetPrepared();
+  }
+
+  function updateButtons() {
+    const ok = !!st.img && st.tiles.length > 0 && !st.busy;
+    $("cut").disabled = !ok;
+    $("dlZip").disabled = !ok;
+    $("dlZip2").disabled = !ok || !st.cutDone;
+    $("saveEach").disabled = !ok || !st.cutDone;
+  }
+
+  // ---------- 預覽（切割墊 + 像素尺規） ----------
+  const pv = $("preview");
+  const RULER = 22;
+  let view = { x: 0, y: 0, s: 1, w: 0, h: 0 };
+  let drag = null;
+
+  function drawPreview() {
+    const box = pv.parentElement.getBoundingClientRect();
+    const cssW = Math.max(200, Math.floor(box.width));
+    const maxH = Math.max(240, Math.min(window.innerHeight * 0.62, 720));
+    const aspect = st.img ? st.H / st.W : 0.75;
+    const cssH = Math.round(Math.min(maxH, (cssW - RULER - 16) * aspect + RULER + 16));
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    pv.width = Math.round(cssW * dpr); pv.height = Math.round(cssH * dpr);
+    pv.style.height = cssH + "px";
+    const g = pv.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const mat = css("--mat"), line = css("--mat-line"), ink = css("--mat-ink"), blade = css("--blade");
+    g.fillStyle = mat; g.fillRect(0, 0, cssW, cssH);
+    g.strokeStyle = line; g.lineWidth = 1;
+    for (let x = 0.5; x < cssW; x += 16) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, cssH); g.stroke(); }
+    for (let y = 0.5; y < cssH; y += 16) { g.beginPath(); g.moveTo(0, y); g.lineTo(cssW, y); g.stroke(); }
+
+    if (!st.img) return;
+    const aw = cssW - RULER - 16, ah = cssH - RULER - 16;
+    const s = Math.min(aw / st.W, ah / st.H);
+    const w = st.W * s, h = st.H * s;
+    const x = RULER + (aw - w) / 2 + 8, y = RULER + (ah - h) / 2 + 8;
+    view = { x, y, s, w, h };
+
+    g.fillStyle = "#fff"; g.fillRect(x, y, w, h);
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+    g.drawImage(st.img, x, y, w, h);
+
+    // 尺規
+    g.fillStyle = ink; g.strokeStyle = ink; g.font = "10px " + css("--font-num");
+    const step = niceStep(st.W / (w / 70));
+    g.textBaseline = "top"; g.textAlign = "center";
+    for (let px = 0; px <= st.W; px += step) {
+      const sx = Math.round(x + px * s) + 0.5;
+      g.beginPath(); g.moveTo(sx, RULER - 6); g.lineTo(sx, RULER); g.stroke();
+      if (sx < cssW - 14) g.fillText(String(px), sx, 4);
+      for (let k = 1; k < 5; k++) { const mx = Math.round(x + (px + step * k / 5) * s) + 0.5; if (px + step * k / 5 > st.W) break; g.beginPath(); g.moveTo(mx, RULER - 3); g.lineTo(mx, RULER); g.stroke(); }
+    }
+    const stepY = niceStep(st.H / (h / 50));
+    g.textAlign = "left"; g.textBaseline = "middle";
+    for (let py = 0; py <= st.H; py += stepY) {
+      const sy = Math.round(y + py * s) + 0.5;
+      g.beginPath(); g.moveTo(RULER - 6, sy); g.lineTo(RULER, sy); g.stroke();
+      g.save(); g.translate(9, sy); g.rotate(-Math.PI / 2); g.textAlign = "center"; g.fillText(String(py), 0, 0); g.restore();
+    }
+
+    // 分割線
+    const n = st.tiles.length;
+    st.tiles.forEach((t, i) => {
+      const rx = x + t.x * s, ry = y + t.y * s, rw = t.w * s, rh = t.h * s;
+      if (n <= 2000) { g.fillStyle = i % 2 ? "rgba(224,130,42,.16)" : "rgba(40,170,130,.14)"; g.fillRect(rx, ry, rw, rh); }
+      g.lineWidth = 1.5; g.strokeStyle = "rgba(0,0,0,.45)"; g.strokeRect(rx, ry, rw, rh);
+      g.lineWidth = 1; g.strokeStyle = blade; g.setLineDash([6, 4]); g.strokeRect(rx + .5, ry + .5, rw - 1, rh - 1); g.setLineDash([]);
+    });
+    g.font = "bold 11px " + css("--font-num"); g.textAlign = "left"; g.textBaseline = "top";
+    st.tiles.forEach((t) => {
+      const rx = x + t.x * s, ry = y + t.y * s;
+      if (t.w * s < 24 || t.h * s < 18) return;
+      const label = String(t.index), tw = g.measureText(label).width + 8;
+      g.fillStyle = "rgba(10,20,15,.78)"; g.fillRect(rx + 3, ry + 3, tw, 16);
+      g.fillStyle = "#fff"; g.fillText(label, rx + 7, ry + 5);
+    });
+
+    if (drag && drag.moved) {
+      const r = dragRect();
+      g.fillStyle = "rgba(255,220,80,.22)"; g.fillRect(x + r.x * s, y + r.y * s, r.w * s, r.h * s);
+      g.strokeStyle = "#ffd84a"; g.lineWidth = 2; g.setLineDash([6, 4]);
+      g.strokeRect(x + r.x * s, y + r.y * s, r.w * s, r.h * s); g.setLineDash([]);
+      g.fillStyle = "#ffd84a"; g.font = "bold 12px " + css("--font-num");
+      g.fillText(`${r.w} × ${r.h}`, Math.min(x + (r.x + r.w) * s + 4, cssW - 90), y + (r.y + r.h) * s + 4);
+    }
+  }
+  function niceStep(raw) {
+    const p = Math.pow(10, Math.floor(Math.log10(Math.max(1, raw))));
+    for (const m of [1, 2, 5, 10]) if (p * m >= raw) return p * m;
+    return p * 10;
+  }
+  function toImg(e, clamp) {
+    const r = pv.getBoundingClientRect();
+    let px = Math.round((e.clientX - r.left - view.x) / view.s), py = Math.round((e.clientY - r.top - view.y) / view.s);
+    if (clamp) { px = Math.max(0, Math.min(st.W, px)); py = Math.max(0, Math.min(st.H, py)); }
+    return { x: px, y: py };
+  }
+  function dragRect() {
+    return { x: Math.min(drag.a.x, drag.b.x), y: Math.min(drag.a.y, drag.b.y), w: Math.abs(drag.a.x - drag.b.x), h: Math.abs(drag.a.y - drag.b.y) };
+  }
+  pv.addEventListener("pointerdown", (e) => {
+    if (!st.img || st.busy) return;
+    const p = toImg(e, true);
+    drag = { a: p, b: p, moved: false, custom: mode() === "custom", id: e.pointerId };
+    if (drag.custom) pv.setPointerCapture(e.pointerId);
+  });
+  pv.addEventListener("pointermove", (e) => {
+    if (st.img) {
+      const p = toImg(e, false);
+      $("cursor").textContent = p.x >= 0 && p.y >= 0 && p.x <= st.W && p.y <= st.H ? `X ${p.x}  Y ${p.y}` : "";
+    }
+    if (!drag || !drag.custom) return;
+    drag.b = toImg(e, true);
+    if (Math.abs(drag.b.x - drag.a.x) * view.s > 4 || Math.abs(drag.b.y - drag.a.y) * view.s > 4) drag.moved = true;
+    if (drag.moved) drawPreview();
+  });
+  function endDrag(e) {
+    if (!drag) return;
+    const d = drag; drag = null;
+    if (d.custom && d.moved) {
+      const r = { x: Math.min(d.a.x, d.b.x), y: Math.min(d.a.y, d.b.y), w: Math.abs(d.a.x - d.b.x), h: Math.abs(d.a.y - d.b.y) };
+      if (r.w >= 2 && r.h >= 2) { st.regions.push(r); renderRegions(); recompute(); return; }
+    } else if (!d.moved && e.type === "pointerup") {
+      const p = d.a;
+      for (let i = st.tiles.length - 1; i >= 0; i--) {
+        const t = st.tiles[i];
+        if (p.x >= t.x && p.x < t.x + t.w && p.y >= t.y && p.y < t.y + t.h) { openViewer(i); break; }
+      }
+    }
+    drawPreview();
+  }
+  pv.addEventListener("pointerup", endDrag);
+  pv.addEventListener("pointercancel", endDrag);
+  pv.addEventListener("pointerleave", () => { $("cursor").textContent = ""; });
+  new ResizeObserver(() => drawPreview()).observe(pv.parentElement);
+  if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawPreview);
+  new MutationObserver(drawPreview).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  // ---------- 設定介面 ----------
+  [[2, 1], [1, 2], [2, 2], [3, 3], [4, 4], [1, 3]].forEach(([c, r]) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "chip small"; b.textContent = `${c}×${r}`;
+    b.addEventListener("click", () => { $("cols").value = c; $("rows").value = r; recompute(); });
+    $("presets").appendChild(b);
+  });
+  SCALES.forEach((sc, i) => {
+    const l = document.createElement("label");
+    l.className = "chip";
+    l.innerHTML = `<input type="checkbox" id="sc${i}" ${sc.f === 1 ? "checked" : ""}>${sc.label}`;
+    $("scales").appendChild(l);
+  });
+  document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", () => {
+    const m = mode();
+    $("p-equal").hidden = m !== "equal"; $("p-size").hidden = m !== "size"; $("p-custom").hidden = m !== "custom";
+    pv.classList.toggle("drawing", m === "custom");
+    $("stageHint").textContent = m === "custom" ? "在圖上拖曳即可框出新區塊" : "點一下區塊可以看原始解析度";
+    recompute();
+  }));
+  ["cols", "rows", "sw", "sh"].forEach((id) => $(id).addEventListener("input", recompute));
+  $("keep").addEventListener("change", recompute);
+
+  function renderRegions() {
+    const box = $("regions");
+    if (!st.regions.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div class="region head"><span>#</span><span>X</span><span>Y</span><span>寬</span><span>高</span><span></span></div>` +
+      st.regions.map((r, i) => `<div class="region" data-i="${i}"><b>${i + 1}</b>` +
+        ["x", "y", "w", "h"].map((k) => `<input type="number" inputmode="numeric" id="rg${i}${k}" data-k="${k}" value="${r[k]}" aria-label="區塊 ${i + 1} ${k}">`).join("") +
+        `<button class="btn icon" type="button" data-del="${i}" aria-label="刪除區塊 ${i + 1}">×</button></div>`).join("");
+  }
+  $("regions").addEventListener("input", (e) => {
+    const row = e.target.closest(".region[data-i]"); if (!row || !e.target.dataset.k) return;
+    st.regions[+row.dataset.i][e.target.dataset.k] = parseInt(e.target.value, 10) || 0;
+    recompute();
+  });
+  $("regions").addEventListener("click", (e) => {
+    const d = e.target.closest("[data-del]"); if (!d) return;
+    st.regions.splice(+d.dataset.del, 1); renderRegions(); recompute();
+  });
+  $("addRegion").addEventListener("click", () => {
+    if (!st.img) return;
+    st.regions.push({ x: 0, y: 0, w: Math.min(1080, st.W), h: Math.min(1080, st.H) });
+    renderRegions(); recompute();
+  });
+  $("clearRegions").addEventListener("click", () => { st.regions = []; renderRegions(); recompute(); });
+
+  function selectedScales() {
+    const list = SCALES.filter((_, i) => $("sc" + i).checked).map((s) => ({ ...s }));
+    if ($("customOn").checked) {
+      const p = Math.max(1, Math.min(800, parseInt($("customPct").value, 10) || 100));
+      if (!list.some((s) => Math.abs(s.f * 100 - p) < 0.01)) list.push({ f: p / 100, label: p + "%", folder: p === 100 ? "100%_原始" : p + "%" });
+    }
+    return list;
+  }
+  const fmt = () => document.querySelector('input[name="fmt"]:checked').value;
+
+  // ---------- 產生圖檔 ----------
+  async function renderTile(t, scale, format) {
+    const nw = Math.max(1, Math.round(t.w * scale)), nh = Math.max(1, Math.round(t.h * scale));
+    if (nw * nh > MAX_CANVAS) throw Object.assign(new Error(`#${t.index} 在 ${Math.round(scale * 100)}% 時為 ${nw}×${nh}，超過手機畫布上限`), { skip: true });
+    const c = document.createElement("canvas"); c.width = nw; c.height = nh;
+    const g = c.getContext("2d");
+    if (format === "jpg") { g.fillStyle = "#fff"; g.fillRect(0, 0, nw, nh); }
+    if (scale === 1) g.imageSmoothingEnabled = false; // 1:1 原始像素複製
+    else { g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high"; }
+    g.drawImage(st.img, t.x, t.y, t.w, t.h, 0, 0, nw, nh);
+    const blob = await new Promise((res) => c.toBlob(res, format === "jpg" ? "image/jpeg" : "image/png", 1));
+    c.width = c.height = 0; // 釋放記憶體
+    if (!blob) throw new Error("產生圖檔失敗，圖片可能太大");
+    return blob;
+  }
+
+  function jobList() {
+    const scales = selectedScales(), sub = $("subDir").checked, f = fmt();
+    const ext = f === "jpg" ? ".jpg" : ".png";
+    const jobs = [];
+    st.tiles.forEach((t) => scales.forEach((sc) => {
+      const file = sub ? `${st.name}_${t.name}${ext}` : `${st.name}_${t.name}_${Math.round(sc.f * 100)}pct${ext}`;
+      jobs.push({ t, sc, path: sub ? `${sc.folder}/${file}` : file, file: scales.length > 1 && !sub ? file : `${st.name}_${t.name}${scales.length > 1 ? "_" + Math.round(sc.f * 100) + "pct" : ""}${ext}` });
+    }));
+    return { jobs, scales, f };
+  }
+
+  // ---------- ZIP（不壓縮，內容與原圖檔完全相同） ----------
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(u8) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+  function buildZip(entries) {
+    const enc = new TextEncoder(), parts = [], central = [];
+    const d = new Date();
+    const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    let offset = 0;
+    for (const e of entries) {
+      const name = enc.encode(e.path), crc = crc32(e.data), size = e.data.length;
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+      lh.setUint16(10, time, true); lh.setUint16(12, date, true); lh.setUint32(14, crc, true);
+      lh.setUint32(18, size, true); lh.setUint32(22, size, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+      parts.push(lh.buffer, name, e.data);
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+      ch.setUint16(10, 0, true); ch.setUint16(12, time, true); ch.setUint16(14, date, true); ch.setUint32(16, crc, true);
+      ch.setUint32(20, size, true); ch.setUint32(24, size, true); ch.setUint16(28, name.length, true);
+      ch.setUint32(42, offset, true);
+      central.push(ch.buffer, name);
+      offset += 30 + name.length + size;
+    }
+    const cdSize = central.reduce((a, b) => a + b.byteLength, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+    end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+    return new Blob([...parts, ...central, end.buffer], { type: "application/zip" });
+  }
+
+  function setBusy(b) {
+    st.busy = b;
+    document.querySelectorAll(".side input, .side button").forEach((el) => { el.disabled = b; });
+    updateButtons();
+  }
+
+  async function downloadZip() {
+    if (st.busy || !st.tiles.length) return;
+    const { jobs, scales } = jobList();
+    if (!scales.length) { setStatus("請至少勾選一種輸出解析度。"); return; }
+    setBusy(true);
+    const entries = [], skipped = [];
+    try {
+      for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        try {
+          const blob = await renderTile(j.t, j.sc.f, fmt());
+          entries.push({ path: j.path, data: new Uint8Array(await blob.arrayBuffer()) });
+        } catch (e) { if (e.skip) skipped.push(e.message); else throw e; }
+        setStatus(`正在產生 ${i + 1} / ${jobs.length}　${j.path}`, Math.round((i + 1) / jobs.length * 90));
+        if (i % 4 === 3) await tick();
+      }
+      if (!entries.length) { setStatus("沒有可輸出的檔案。" + (skipped[0] || "")); return; }
+      setStatus("正在打包 ZIP…", 95);
+      const zip = buildZip(entries);
+      const zipName = `${st.name}_${stamp()}.zip`;
+      setStatus(`ZIP 已準備好（${entries.length} 個檔案，${fmtBytes(zip.size)}），請在提示中確認儲存。`, 100);
+      const r = await saveFile(zipName, zip);
+      if (r === "saved") setStatus(`已儲存 ${zipName}（${entries.length} 個檔案）` + (skipped.length ? `；略過 ${skipped.length} 張：${skipped[0]}` : ""), 100);
+      else if (r === "declined") setStatus("已取消儲存。需要時再按一次「下載全部 ZIP」。", 0);
+      else if (r === "rate") setStatus("已經有一個儲存提示開著，請先處理它再試一次。", 0);
+      else if (r === "too_large") setStatus("ZIP 太大無法儲存，請少選幾種解析度或改用逐張儲存。", 0);
+    } catch (e) {
+      setStatus("輸出失敗：" + e.message, 0);
+    } finally { setBusy(false); }
+  }
+
+  // 公開網站版（不在 Claude 裡）：用 iPhone 分享選單一次存全部到「照片」。
+  // 分享需要在點擊當下呼叫，所以先按一次準備檔案，再按一次開啟分享選單。
+  const canShareFiles = () => !window.claude && !!navigator.canShare;
+  let prepared = null;
+  function prepKey() {
+    return JSON.stringify([st.fileName, st.size, st.tiles.map((t) => [t.x, t.y, t.w, t.h]), selectedScales().map((s) => s.f), fmt(), $("subDir").checked]);
+  }
+  function resetPrepared() {
+    prepared = null;
+    if (canShareFiles()) $("saveEach").textContent = "存到照片";
+  }
+  async function shareToPhotos() {
+    if (prepared && prepared.key === prepKey()) {
+      try { await navigator.share({ files: prepared.files }); setStatus(`已開啟分享選單，選「儲存 ${prepared.files.length} 張影像」即可存進照片。`, 100); }
+      catch (e) { setStatus(e && e.name === "AbortError" ? "已取消。" : "這個瀏覽器無法分享這些檔案，請改用「下載全部 ZIP」。", 0); }
+      return;
+    }
+    const { jobs, scales } = jobList();
+    if (!scales.length) { setStatus("請至少勾選一種輸出解析度。"); return; }
+    setBusy(true);
+    const files = [];
+    try {
+      for (let i = 0; i < jobs.length; i++) {
+        try {
+          const blob = await renderTile(jobs[i].t, jobs[i].sc.f, fmt());
+          files.push(new File([blob], jobs[i].file, { type: blob.type }));
+        } catch (e) { if (!e.skip) throw e; }
+        setStatus(`準備中 ${i + 1} / ${jobs.length}`, Math.round((i + 1) / jobs.length * 100));
+        if (i % 4 === 3) await tick();
+      }
+      if (!files.length || !navigator.canShare({ files })) { setStatus("這個瀏覽器無法分享這些檔案，請改用「下載全部 ZIP」。", 0); return; }
+      prepared = { key: prepKey(), files };
+      setStatus(`${files.length} 張已準備好，再按一次「存到照片」。`, 100);
+    } catch (e) { setStatus("準備失敗：" + e.message, 0); }
+    finally { setBusy(false); if (prepared) $("saveEach").textContent = `存到照片（${prepared.files.length} 張）`; }
+  }
+
+  async function saveEach() {
+    if (st.busy || !st.tiles.length) return;
+    if (canShareFiles()) return shareToPhotos();
+    const { jobs, scales } = jobList();
+    if (!scales.length) { setStatus("請至少勾選一種輸出解析度。"); return; }
+    setBusy(true);
+    let saved = 0;
+    try {
+      for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        let blob;
+        try { blob = await renderTile(j.t, j.sc.f, fmt()); }
+        catch (e) { if (e.skip) continue; throw e; }
+        setStatus(`第 ${i + 1} / ${jobs.length} 張：${j.file}，請在提示中確認儲存`, Math.round(i / jobs.length * 100));
+        let r = await saveFile(j.file, blob);
+        for (let k = 0; r === "rate" && k < 5; k++) { await new Promise((ok) => setTimeout(ok, 1500)); r = await saveFile(j.file, blob); }
+        if (r === "declined") { setStatus(`已停止逐張儲存，共存了 ${saved} 張。`, 0); return; }
+        if (r === "saved") saved++;
+      }
+      setStatus(`完成，共存了 ${saved} 張。`, 100);
+    } catch (e) {
+      setStatus("儲存失敗：" + e.message, 0);
+    } finally { setBusy(false); }
+  }
+
+  // ---------- 切割預覽 ----------
+  function clearResults() {
+    $("thumbs").innerHTML = ""; $("resEmpty").hidden = false; $("resTitle").textContent = "切割結果";
+    st.cutDone = false; updateButtons();
+  }
+  async function cut() {
+    if (st.busy || !st.tiles.length) return;
+    setBusy(true);
+    const box = $("thumbs"); box.innerHTML = "";
+    const MAX_THUMBS = 400, n = Math.min(MAX_THUMBS, st.tiles.length);
+    try {
+      for (let i = 0; i < n; i++) {
+        const t = st.tiles[i];
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "thumb";
+        const c = document.createElement("canvas");
+        const S = 160, k = Math.min(S / t.w, S / t.h);
+        c.width = Math.max(1, Math.round(t.w * k)); c.height = Math.max(1, Math.round(t.h * k));
+        const g = c.getContext("2d");
+        g.imageSmoothingEnabled = k < 1; g.imageSmoothingQuality = "high";
+        g.drawImage(st.img, t.x, t.y, t.w, t.h, 0, 0, c.width, c.height);
+        const sp = document.createElement("span");
+        sp.innerHTML = `<b>#${t.index}</b> <span class="num">${t.w}×${t.h}</span>`;
+        b.append(c, sp);
+        b.addEventListener("click", () => openViewer(i));
+        box.appendChild(b);
+        if (i % 12 === 11) { setStatus(`產生預覽 ${i + 1} / ${n}`, Math.round((i + 1) / n * 100)); await tick(); }
+      }
+      $("resEmpty").hidden = true;
+      $("resTitle").textContent = `切割結果 · 共 ${st.tiles.length} 張` + (st.tiles.length > MAX_THUMBS ? `（預覽前 ${MAX_THUMBS} 張）` : "");
+      st.cutDone = true;
+      setStatus(`已切成 ${st.tiles.length} 張。點縮圖可看原始解析度。`, 100);
+    } finally { setBusy(false); }
+    if (window.matchMedia("(max-width: 899px)").matches) $("resTitle").scrollIntoView({ behavior: "smooth", block: "start" });
+    if ($("autoDl").checked) downloadZip();
+  }
+
+  // ---------- 單張檢視 ----------
+  function openViewer(i) {
+    if (!st.tiles[i]) return;
+    st.viewIdx = i;
+    const t = st.tiles[i];
+    const c = $("vCanvas");
+    c.width = t.w; c.height = t.h;
+    const g = c.getContext("2d"); g.imageSmoothingEnabled = false;
+    g.drawImage(st.img, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
+    $("vMeta").innerHTML = `<b>#${t.index}</b>　${t.name}　<span class="num">${t.w} × ${t.h} px</span>　位置 <span class="num">(${t.x}, ${t.y})</span>`;
+    $("vPrev").disabled = i <= 0; $("vNext").disabled = i >= st.tiles.length - 1;
+    applyFit();
+    $("viewer").hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+  function applyFit() {
+    const sc = $("vScroll");
+    sc.classList.toggle("fit", st.fit); sc.classList.toggle("real", !st.fit);
+    $("vMode").textContent = st.fit ? "實際像素 100%" : "符合畫面";
+    const c = $("vCanvas");
+    if (st.fit) { c.style.width = ""; c.style.height = ""; }
+    else { const d = window.devicePixelRatio || 1; c.style.width = c.width / d + "px"; c.style.height = c.height / d + "px"; }
+  }
+  function closeViewer() { $("viewer").hidden = true; document.body.style.overflow = ""; }
+  $("vClose").addEventListener("click", closeViewer);
+  $("vPrev").addEventListener("click", () => openViewer(st.viewIdx - 1));
+  $("vNext").addEventListener("click", () => openViewer(st.viewIdx + 1));
+  $("vMode").addEventListener("click", () => { st.fit = !st.fit; applyFit(); });
+  $("vSave").addEventListener("click", async () => {
+    const t = st.tiles[st.viewIdx]; if (!t) return;
+    const f = fmt();
+    try {
+      const blob = await renderTile(t, 1, f);
+      const name = `${st.name}_${t.name}.${f === "jpg" ? "jpg" : "png"}`;
+      const r = await saveFile(name, blob);
+      setStatus(r === "saved" ? `已儲存 ${name}（原始解析度）` : r === "declined" ? "已取消儲存。" : "請稍後再試一次。");
+    } catch (e) { setStatus("儲存失敗：" + e.message); }
+  });
+  document.addEventListener("keydown", (e) => {
+    if ($("viewer").hidden) return;
+    if (e.key === "Escape") closeViewer();
+    if (e.key === "ArrowLeft" && st.viewIdx > 0) openViewer(st.viewIdx - 1);
+    if (e.key === "ArrowRight" && st.viewIdx < st.tiles.length - 1) openViewer(st.viewIdx + 1);
+  });
+
+  $("cut").addEventListener("click", cut);
+  $("dlZip").addEventListener("click", downloadZip);
+  $("dlZip2").addEventListener("click", downloadZip);
+  $("saveEach").addEventListener("click", saveEach);
+
+  document.querySelectorAll('#scales input, #customOn, #customPct, input[name="fmt"], #subDir').forEach((el) => el.addEventListener("change", resetPrepared));
+  if (canShareFiles()) $("saveHint").textContent = "iPhone：「下載全部 ZIP」會存到「檔案」App，點一下就能解壓縮；想直接存進「照片」，請用結果區的「存到照片」。";
+  if (!window.claude && "serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+
+  renderInfo();
+  recompute();
+  makeSample().then((b) => { if (!st.img) loadBlob(b, "範例圖片.png", true); });
+})();
+</script>
+
+</body>
+</html>

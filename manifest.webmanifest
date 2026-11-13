@@ -1,0 +1,16 @@
+{
+  "name": "圖片分割工具",
+  "short_name": "圖片分割",
+  "description": "依原始解析度把圖片切成多張，支援多種解析度輸出。",
+  "lang": "zh-Hant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#edf0ec",
+  "theme_color": "#1f5b46",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
